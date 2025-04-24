@@ -3,6 +3,9 @@ import numpy as np
 from typing import Dict, List
 from src.structures.analysis import SegmentAnalysis
 import mediapipe as mp
+import logging
+
+logger = logging.getLogger(__name__)
 
 class StreamingVisualizer:
     """
@@ -17,14 +20,23 @@ class StreamingVisualizer:
         """
         self.window_name = window_name
         self.speaker_colors = {}  # Mapeia speaker_id para cores
+        self.emotions = [
+            "feliz",
+            "triste",
+            "raiva",
+            "medo",
+            "surpresa",
+            "nojo",
+            "neutro"
+        ]
         self.emotion_colors = {
-            "happy": (0, 255, 0),      # Verde
-            "sad": (255, 0, 0),        # Azul
-            "angry": (0, 0, 255),      # Vermelho
-            "fear": (128, 0, 128),     # Roxo
-            "surprise": (255, 255, 0), # Amarelo
-            "disgust": (0, 128, 0),    # Verde escuro
-            "neutral": (128, 128, 128) # Cinza
+            "feliz": (0, 255, 0),      # Verde
+            "triste": (255, 0, 0),     # Azul
+            "raiva": (0, 0, 255),      # Vermelho
+            "medo": (128, 0, 128),     # Roxo
+            "surpresa": (255, 255, 0), # Amarelo
+            "nojo": (0, 128, 0),       # Verde escuro
+            "neutro": (128, 128, 128)  # Cinza
         }
         
         # Cores disponíveis para speakers
@@ -304,76 +316,121 @@ class StreamingVisualizer:
             1
         )
     
-    def visualize(
-        self,
-        frame: np.ndarray,
-        analysis: Dict
-    ) -> np.ndarray:
-        """
-        Visualiza as análises em um frame.
-        
-        Args:
-            frame: Frame do vídeo
-            analysis: Resultados da análise
-            
-        Returns:
-            Frame com visualizações
-        """
-        # Cria cópia do frame
-        vis_frame = frame.copy()
-        
-        # Obtém speaker_id
-        speaker_id = analysis.get("speaker_id", "unknown")
-        
-        # Obtém posição da face da análise
-        face_position = analysis["face_analysis"]["face_position"]
-        
-        if face_position["w"] > 0 and face_position["h"] > 0:
-            # Desenha análise facial para o rosto detectado
-            self.draw_face_analysis(
-                vis_frame,
-                analysis["face_analysis"],
-                (face_position["x"], face_position["y"], face_position["w"], face_position["h"]),
-                speaker_id
-            )
-        
-        # Desenha barras de emoções no canto inferior direito
-        self.draw_emotion_bars(
-            vis_frame,
-            analysis["fused_analysis"],
-            vis_frame.shape[1] - 220,
-            vis_frame.shape[0] - 200,
-            speaker_id
-        )
-        
-        # Desenha análise de áudio no canto superior direito
-        self.draw_audio_analysis(
-            vis_frame,
-            analysis["audio_analysis"],
-            vis_frame.shape[1] - 220,
-            20,
-            speaker_id
-        )
-        
-        # Desenha análise de texto no canto superior esquerdo
-        self.draw_text_analysis(
-            vis_frame,
-            analysis["text_analysis"],
-            20,
-            20,
-            speaker_id
-        )
-        
-        # Desenha emoção dominante
-        color = self._get_speaker_color(speaker_id)
-        cv2.putText(
-            vis_frame,
-            f"Emoção Dominante: {analysis['dominant_emotion']}",
-            (20, vis_frame.shape[0] - 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2
-        )
-        
-        return vis_frame 
+    def visualize(self, frame: np.ndarray, analysis: Dict) -> np.ndarray:
+        """Visualiza os resultados da análise"""
+        try:
+            # --- Face ---
+            if analysis["face"] is not None and analysis["face"]["face_position"] is not None:
+                # Desenha bounding box
+                face_position = analysis["face"]["face_position"]
+                x, y, w, h = face_position['x'], face_position['y'], face_position['w'], face_position['h']
+                
+                # Desenha retângulo com cor baseada na emoção
+                if analysis["face"]["emotion_probs"] is not None:
+                    emotion_probs = np.array(analysis["face"]["emotion_probs"]).flatten()
+                    if len(emotion_probs) > 0:  # Verifica se tem emoções
+                        emotion_idx = np.argmax(emotion_probs)
+                        if emotion_idx < len(self.emotions):  # Verifica se o índice é válido
+                            emotion = self.emotions[emotion_idx]
+                            color = self.emotion_colors[emotion]
+                        else:
+                            color = (0, 255, 0)  # Verde padrão
+                    else:
+                        color = (0, 255, 0)  # Verde padrão
+                else:
+                    color = (0, 255, 0)  # Verde padrão
+                
+                # Desenha retângulo com borda mais grossa
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 3)
+                
+                # Desenha emoções
+                if analysis["face"]["emotion_probs"] is not None:
+                    emotion_probs = np.array(analysis["face"]["emotion_probs"]).flatten()
+                    if len(emotion_probs) > 0:  # Verifica se tem emoções
+                        emotion_idx = np.argmax(emotion_probs)
+                        if emotion_idx < len(self.emotions):  # Verifica se o índice é válido
+                            emotion = self.emotions[emotion_idx]
+                            confidence = float(emotion_probs[emotion_idx])
+                            
+                            # Desenha nome da emoção
+                            cv2.putText(frame, f"Face: {emotion}", (x, y - 10),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                            
+                            # Desenha confiança
+                            cv2.putText(frame, f"Conf: {confidence:.2f}", (x, y + h + 20),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                # Desenha qualidade
+                if analysis["face"]["face_quality"] is not None:
+                    face_quality = analysis["face"]["face_quality"]
+                    cv2.putText(frame, f"Qual: {face_quality['detection_confidence']:.2f}", 
+                              (x, y + h + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # --- Áudio ---
+            if analysis["audio"] is not None and analysis["audio"]["emotion_probs"] is not None:
+                # Desenha emoções
+                emotion_probs = np.array(analysis["audio"]["emotion_probs"]).flatten()
+                if len(emotion_probs) > 0:  # Verifica se tem emoções
+                    emotion_idx = np.argmax(emotion_probs)
+                    if emotion_idx < len(self.emotions):  # Verifica se o índice é válido
+                        emotion = self.emotions[emotion_idx]
+                        confidence = float(emotion_probs[emotion_idx])
+                        color = self.emotion_colors[emotion]
+                        
+                        cv2.putText(frame, f"Áudio: {emotion}", (10, 30),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.putText(frame, f"Conf: {confidence:.2f}", (10, 50),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        
+                        # Desenha qualidade
+                        if analysis["audio"]["audio_quality"] is not None:
+                            audio_quality = analysis["audio"]["audio_quality"]
+                            cv2.putText(frame, f"Qual: {audio_quality['quality']:.2f}", (10, 70),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # --- Texto ---
+            if analysis["text"] is not None and analysis["text"]["emotion_probs"] is not None:
+                # Desenha emoções
+                emotion_probs = np.array(analysis["text"]["emotion_probs"]).flatten()
+                if len(emotion_probs) > 0:  # Verifica se tem emoções
+                    emotion_idx = np.argmax(emotion_probs)
+                    if emotion_idx < len(self.emotions):  # Verifica se o índice é válido
+                        emotion = self.emotions[emotion_idx]
+                        confidence = float(emotion_probs[emotion_idx])
+                        color = self.emotion_colors[emotion]
+                        
+                        cv2.putText(frame, f"Texto: {emotion}", (10, 90),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.putText(frame, f"Conf: {confidence:.2f}", (10, 110),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        
+                        # Desenha qualidade
+                        if analysis["text"]["text_quality"] is not None:
+                            text_quality = analysis["text"]["text_quality"]
+                            cv2.putText(frame, f"Qual: {text_quality['quality']:.2f}", (10, 130),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # --- Emoção fundida ---
+            if analysis["fused_emotion"] is not None:
+                emotion_probs = np.array(analysis["fused_emotion"]).flatten()
+                if len(emotion_probs) > 0:  # Verifica se tem emoções
+                    emotion_idx = np.argmax(emotion_probs)
+                    if emotion_idx < len(self.emotions):  # Verifica se o índice é válido
+                        emotion = self.emotions[emotion_idx]
+                        confidence = float(emotion_probs[emotion_idx])
+                        color = self.emotion_colors[emotion]
+                        
+                        cv2.putText(frame, f"Fusão: {emotion}", (10, 150),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.putText(frame, f"Conf: {confidence:.2f}", (10, 170),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # --- Speaker ID ---
+            if analysis["speaker_id"] is not None:
+                cv2.putText(frame, f"Speaker: {analysis['speaker_id']}", (10, 190),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+            return frame
+        except Exception as e:
+            logger.error(f"Erro na visualização: {e}", exc_info=True)
+            return frame 

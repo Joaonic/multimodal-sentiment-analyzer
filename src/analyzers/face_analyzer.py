@@ -160,6 +160,7 @@ class FaceAnalyzer:
                 result = result[0]
                 
             emotion_dict = result.get("emotion", {})
+            # Garante 7 emoções
             emotion_probs = torch.tensor([
                 emotion_dict.get("angry", 0),
                 emotion_dict.get("disgust", 0),
@@ -169,6 +170,14 @@ class FaceAnalyzer:
                 emotion_dict.get("surprise", 0),
                 emotion_dict.get("neutral", 0)
             ], device=self.device).float()
+            
+            # Se o modelo retornou 5 emoções, adiciona as faltantes
+            if len(emotion_dict) == 5:
+                logger.warning("Modelo retornou 5 emoções, adicionando as faltantes")
+                # Adiciona as emoções faltantes com probabilidade zero
+                missing_emotions = {"disgust": 0, "fear": 0}
+                for emotion, value in missing_emotions.items():
+                    emotion_probs[list(emotion_dict.keys()).index(emotion)] = value
             
             if emotion_probs.sum() > 0:
                 emotion_probs = emotion_probs / emotion_probs.sum()
@@ -181,7 +190,7 @@ class FaceAnalyzer:
                 
             return emotion_probs
         except Exception as e:
-            print(f"Erro na análise de emoção: {e}")
+            logger.error(f"Erro na análise de emoção: {e}")
             return torch.ones(1, 7, device=self.device).float() / 7
     
     def _analyze_micro_expressions(self, frame: np.ndarray) -> torch.Tensor:

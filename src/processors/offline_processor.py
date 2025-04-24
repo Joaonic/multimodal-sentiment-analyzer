@@ -200,8 +200,15 @@ class OfflineProcessor:
         # Análise de áudio
         audio_vec = self.audio_analyzer.analyze(audio_segment_path)
         
+        # Transcreve o áudio para texto
+        try:
+            text = self.transcribe_audio(audio_segment_path)
+        except Exception as e:
+            logger.warning(f"Erro na transcrição: {e}")
+            text = ""
+        
         # Análise de texto
-        text_vec = self.text_analyzer.analyze(audio_segment_path)
+        text_vec = self.text_analyzer.analyze(text, speaker)
         
         # Fusão
         fused_vec = self.fusion_model(
@@ -220,7 +227,7 @@ class OfflineProcessor:
             "face_vec": list(face_vec.values()),
             "audio_vec": list(audio_vec.values()),
             "text_vec": list(text_vec.values()),
-            "transcript": "",  # TODO
+            "transcript": text,
             "fused_vec": fused_vec.tolist(),
             "fused_emotion": max(fused_vec, key=fused_vec.get)
         }
@@ -293,4 +300,29 @@ class OfflineProcessor:
         # Limpa arquivo temporário
         os.remove(audio_path)
         
-        return list(speaker_results.values()) 
+        return list(speaker_results.values())
+
+    def transcribe_audio(self, audio_path: str) -> str:
+        """
+        Transcreve o áudio para texto usando o modelo de transcrição.
+        
+        Args:
+            audio_path: Caminho do arquivo de áudio
+            
+        Returns:
+            Texto transcrito
+        """
+        try:
+            # Carrega o modelo de transcrição
+            model = pipeline(
+                "automatic-speech-recognition",
+                model="neuralmind/bert-base-portuguese-cased",
+                device=self.model_config['device']
+            )
+            
+            # Transcreve o áudio
+            result = model(audio_path)
+            return result["text"]
+        except Exception as e:
+            logger.error(f"Erro na transcrição do áudio: {str(e)}", exc_info=True)
+            return "" 

@@ -148,11 +148,15 @@ class TextAnalyzer:
                 outputs = self.emotion_model(**inputs)
                 probs = torch.softmax(outputs.logits, dim=-1)
             
-            # Adiciona dimensão de batch
-            return probs.unsqueeze(0)  # [1, 8]
+            # Garante 2D [1,7]
+            if probs.dim() == 1:
+                probs = probs.unsqueeze(0)
+            return probs  # shape [1,7]
+        
         except Exception as e:
             print(f"Erro na análise de emoção: {e}")
-            return torch.ones(1, 8, device=self.device) / 8
+            # Fallback: vetor uniforme de 7 emoções
+            return torch.ones(1, 7, device=self.device) / 7
     
     def _analyze_sarcasm(self, text: str) -> torch.Tensor:
         """Analisa a probabilidade de sarcasmo"""
@@ -302,7 +306,7 @@ class TextAnalyzer:
         """Retorna uma análise padrão para quando não detecta texto"""
         return TextAnalysis(
             speaker_id=speaker_id,
-            emotion_probs=torch.ones(1, 8, device=self.device) / 8,
+            emotion_probs=torch.ones(1, 7, device=self.device) / 7,  # 7 emoções
             sarcasm_score=torch.zeros(1, 1, device=self.device),
             humor_score=torch.zeros(1, 1, device=self.device),
             polarity=torch.zeros(1, 1, device=self.device),

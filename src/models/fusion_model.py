@@ -41,14 +41,14 @@ class AdvancedFusionModel(nn.Module):
         self.output_dim = output_dim
         
         # Camadas de normalização para cada modalidade
-        self.audio_norm = nn.LayerNorm(audio_dim)
-        self.text_norm = nn.LayerNorm(text_dim)
-        self.face_norm = nn.LayerNorm(face_dim)
+        self.audio_norm = nn.LayerNorm(audio_dim).to(device)
+        self.text_norm = nn.LayerNorm(text_dim).to(device)
+        self.face_norm = nn.LayerNorm(face_dim).to(device)
         
         # Camadas de projeção para cada modalidade
-        self.audio_proj = nn.Linear(audio_dim, hidden_dim)
-        self.text_proj = nn.Linear(text_dim, hidden_dim)
-        self.face_proj = nn.Linear(face_dim, hidden_dim)
+        self.audio_proj = nn.Linear(audio_dim, hidden_dim).to(device)
+        self.text_proj = nn.Linear(text_dim, hidden_dim).to(device)
+        self.face_proj = nn.Linear(face_dim, hidden_dim).to(device)
         
         # Camadas de processamento para cada modalidade
         self.audio_processor = nn.Sequential(
@@ -94,6 +94,9 @@ class AdvancedFusionModel(nn.Module):
             nn.Linear(hidden_dim // 2, output_dim)
         ).to(device)
         
+        # Camada de fusão para 2 modalidades
+        self.fusion2 = nn.Linear((hidden_dim // 2) * 2, hidden_dim).to(device)
+        
         # Pesos iniciais para cada modalidade
         self.audio_weight = nn.Parameter(torch.tensor(0.3, device=device))
         self.text_weight = nn.Parameter(torch.tensor(0.3, device=device))
@@ -104,6 +107,9 @@ class AdvancedFusionModel(nn.Module):
         
         # Inicializa os pesos
         self._init_weights()
+        
+        # Garante que todo o módulo e submódulos sejam movidos para o device
+        self.to(device)
     
     def _init_weights(self):
         """Inicializa os pesos das camadas"""
@@ -124,83 +130,64 @@ class AdvancedFusionModel(nn.Module):
     
     def forward(
         self,
-        face_probs: torch.Tensor,
-        audio_probs: torch.Tensor,
-        text_probs: torch.Tensor
-    ) -> Dict[str, float]:
-        """
-        Forward pass do modelo.
-        
-        Args:
-            face_probs: Probabilidades de emoção facial e características [batch, face_dim]
-            audio_probs: Probabilidades de emoção de áudio e características [batch, audio_dim]
-            text_probs: Probabilidades de emoção de texto e características [batch, text_dim]
-            
-        Returns:
-            Dicionário com probabilidades de emoção
-        """
-        # Log das dimensões de entrada
-        logger.debug(f"face_probs shape: {face_probs.shape}")
-        logger.debug(f"audio_probs shape: {audio_probs.shape}")
-        logger.debug(f"text_probs shape: {text_probs.shape}")
-        
-        # Garante que todos os tensores estão no mesmo dispositivo
-        face_probs = face_probs.to(self.device)
-        audio_probs = audio_probs.to(self.device)
-        text_probs = text_probs.to(self.device)
-        
-        # Garante que os tensores têm as dimensões corretas [batch, features]
-        if face_probs.dim() == 1:
-            face_probs = face_probs.unsqueeze(0)
-        if audio_probs.dim() == 1:
-            audio_probs = audio_probs.unsqueeze(0)
-        if text_probs.dim() == 1:
-            text_probs = text_probs.unsqueeze(0)
-        
-        # Valida as dimensões
-        self._validate_input_dims(face_probs, audio_probs, text_probs)
-        
-        # Garante que os tensores têm o tipo correto
-        face_probs = face_probs.float()
-        audio_probs = audio_probs.float()
-        text_probs = text_probs.float()
-        
-        # Normaliza cada modalidade
-        face_norm = self.face_norm(face_probs)
-        audio_norm = self.audio_norm(audio_probs)
-        text_norm = self.text_norm(text_probs)
-        
-        # Projeta para o espaço comum
-        face_proj = self.face_proj(face_norm)
-        audio_proj = self.audio_proj(audio_norm)
-        text_proj = self.text_proj(text_norm)
-        
-        # Processa cada modalidade
-        face_features = self.face_processor(face_proj)
-        audio_features = self.audio_processor(audio_proj)
-        text_features = self.text_processor(text_proj)
-        
-        # Concatena features
-        combined = torch.cat([face_features, audio_features, text_features], dim=1)
-        
-        # Aplica camadas de fusão
-        x = self.fusion(combined)
-        
-        # Aplica softmax para obter probabilidades
-        probs = F.softmax(x, dim=1)
-        
-        # Converte para dicionário
-        emotion_probs = {
-            "angry": probs[0][0].item(),
-            "disgust": probs[0][1].item(),
-            "fear": probs[0][2].item(),
-            "happy": probs[0][3].item(),
-            "sad": probs[0][4].item(),
-            "surprise": probs[0][5].item(),
-            "neutral": probs[0][6].item()
-        }
-        
-        return emotion_probs
+        face_probs: Optional[torch.Tensor] = None,
+        audio_probs: Optional[torch.Tensor] = None,
+        text_probs: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass do modelo de fusão"""
+        try:
+            # Verifica quais modalidades estão disponíveis
+            available_modalities = []
+            if face_probs is not None:
+                available_modalities.append("face")
+            if audio_probs is not None:
+                available_modalities.append("audio")
+            if text_probs is not None:
+                available_modalities.append("text")
+
+            if not available_modalities:
+                raise ValueError("Nenhuma modalidade disponível para fusão")
+
+            # Log das modalidades disponíveis
+            logger.debug(f"Modalidades disponíveis: {available_modalities}")
+
+            # Se tivermos apenas uma modalidade, retorna ela
+            if len(available_modalities) == 1:
+                modality = available_modalities[0]
+                if modality == "face":
+                    return {"face": face_probs}
+                elif modality == "audio":
+                    return {"audio": audio_probs}
+                else:
+                    return {"text": text_probs}
+
+            # Se tivermos duas modalidades, faz fusão parcial
+            if len(available_modalities) == 2:
+                if "face" in available_modalities and "audio" in available_modalities:
+                    logger.debug("Fusão face + áudio")
+                    return self._fuse_face_audio(face_probs, audio_probs)
+                elif "face" in available_modalities and "text" in available_modalities:
+                    logger.debug("Fusão face + texto")
+                    return self._fuse_face_text(face_probs, text_probs)
+                else:
+                    logger.debug("Fusão áudio + texto")
+                    return self._fuse_audio_text(audio_probs, text_probs)
+
+            # Se tivermos todas as modalidades, faz fusão completa
+            logger.debug("Fusão completa face + áudio + texto")
+            return self._fuse_all(face_probs, audio_probs, text_probs)
+
+        except Exception as e:
+            logger.error(f"Erro no forward do FusionModel: {str(e)}", exc_info=True)
+            # Em caso de erro, retorna a modalidade mais confiável
+            if face_probs is not None:
+                return {"face": face_probs}
+            elif audio_probs is not None:
+                return {"audio": audio_probs}
+            elif text_probs is not None:
+                return {"text": text_probs}
+            else:
+                raise ValueError("Nenhuma modalidade disponível para retorno de fallback")
     
     def get_weights(self) -> Dict[str, float]:
         """Retorna os pesos atuais de cada modalidade"""
@@ -305,6 +292,129 @@ class AdvancedFusionModel(nn.Module):
             # Salva o modelo
             model.save(path)
             return model
+
+    def _fuse_face_audio(self, face_probs: torch.Tensor, audio_probs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Fusão de face e áudio"""
+        try:
+            # Normaliza os inputs
+            face_norm = self.face_norm(face_probs)
+            audio_norm = self.audio_norm(audio_probs)
+            
+            # Projeta para dimensão oculta
+            face_hidden = self.face_proj(face_norm)
+            audio_hidden = self.audio_proj(audio_norm)
+            
+            # Processa cada modalidade
+            face_processed = self.face_processor(face_hidden)
+            audio_processed = self.audio_processor(audio_hidden)
+            
+            # Concatena e faz fusão
+            fused = torch.cat([face_processed, audio_processed], dim=-1)  # → [batch, 1024]
+            
+            # Usa fusion2 para ajustar a dimensão
+            x = self.fusion2(fused)  # agora aceita 1024 → hidden_dim
+            
+            # Aplica as camadas restantes do fusion
+            for layer in list(self.fusion.children())[1:]:
+                x = layer(x)
+            
+            return {"face": face_probs, "audio": audio_probs, "fused": x}
+        except Exception as e:
+            logger.error(f"Erro na fusão face + áudio: {str(e)}", exc_info=True)
+            # Em caso de erro, retorna a modalidade mais confiável
+            if face_probs is not None:
+                return {"face": face_probs}
+            else:
+                return {"audio": audio_probs}
+
+    def _fuse_face_text(self, face_probs: torch.Tensor, text_probs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Fusão de face e texto"""
+        try:
+            # Normaliza os inputs
+            face_norm = self.face_norm(face_probs)
+            text_norm = self.text_norm(text_probs)
+            
+            # Projeta para dimensão oculta
+            face_hidden = self.face_proj(face_norm)
+            text_hidden = self.text_proj(text_norm)
+            
+            # Processa cada modalidade
+            face_processed = self.face_processor(face_hidden)
+            text_processed = self.text_processor(text_hidden)
+            
+            # Concatena e faz fusão
+            fused = torch.cat([face_processed, text_processed], dim=-1)
+            fused = self.fusion(fused)
+            
+            return {"face": face_probs, "text": text_probs, "fused": fused}
+        except Exception as e:
+            logger.error(f"Erro na fusão face + texto: {str(e)}", exc_info=True)
+            # Em caso de erro, retorna a modalidade mais confiável
+            if face_probs is not None:
+                return {"face": face_probs}
+            else:
+                return {"text": text_probs}
+
+    def _fuse_audio_text(self, audio_probs: torch.Tensor, text_probs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Fusão de áudio e texto"""
+        try:
+            # Normaliza os inputs
+            audio_norm = self.audio_norm(audio_probs)
+            text_norm = self.text_norm(text_probs)
+            
+            # Projeta para dimensão oculta
+            audio_hidden = self.audio_proj(audio_norm)
+            text_hidden = self.text_proj(text_norm)
+            
+            # Processa cada modalidade
+            audio_processed = self.audio_processor(audio_hidden)
+            text_processed = self.text_processor(text_hidden)
+            
+            # Concatena e faz fusão
+            fused = torch.cat([audio_processed, text_processed], dim=-1)
+            fused = self.fusion(fused)
+            
+            return {"audio": audio_probs, "text": text_probs, "fused": fused}
+        except Exception as e:
+            logger.error(f"Erro na fusão áudio + texto: {str(e)}", exc_info=True)
+            # Em caso de erro, retorna a modalidade mais confiável
+            if audio_probs is not None:
+                return {"audio": audio_probs}
+            else:
+                return {"text": text_probs}
+
+    def _fuse_all(self, face_probs: torch.Tensor, audio_probs: torch.Tensor, text_probs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Fusão completa de todas as modalidades"""
+        try:
+            # Normaliza os inputs
+            face_norm = self.face_norm(face_probs)
+            audio_norm = self.audio_norm(audio_probs)
+            text_norm = self.text_norm(text_probs)
+            
+            # Projeta para dimensão oculta
+            face_hidden = self.face_proj(face_norm)
+            audio_hidden = self.audio_proj(audio_norm)
+            text_hidden = self.text_proj(text_norm)
+            
+            # Processa cada modalidade
+            face_processed = self.face_processor(face_hidden)
+            audio_processed = self.audio_processor(audio_hidden)
+            text_processed = self.text_processor(text_hidden)
+            
+            # Concatena e faz fusão
+            fused = torch.cat([face_processed, audio_processed, text_processed], dim=-1)
+            fused = self.fusion(fused)
+            
+            return {"face": face_probs, "audio": audio_probs, "text": text_probs, "fused": fused}
+        except Exception as e:
+            logger.error(f"Erro na fusão completa: {str(e)}", exc_info=True)
+            # Em caso de erro, retorna a modalidade mais confiável
+            if face_probs is not None:
+                return {"face": face_probs}
+            elif audio_probs is not None:
+                return {"audio": audio_probs}
+            else:
+                return {"text": text_probs}
 
 # Alias para compatibilidade
 FusionModel = AdvancedFusionModel 
