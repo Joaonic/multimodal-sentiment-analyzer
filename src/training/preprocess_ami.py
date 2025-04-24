@@ -1,10 +1,9 @@
-import os
 import json
-import numpy as np
-from typing import Dict, List, Tuple
 import logging
 from pathlib import Path
-import torch
+from typing import Dict, List, Tuple
+
+import numpy as np
 from tqdm import tqdm
 
 # Configuração de logging

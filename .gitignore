@@ -25,6 +25,11 @@ wheels/
 .installed.cfg
 *.egg
 
+# Virtual Environment
+venv/
+env/
+ENV/
+
 # IDEs e editores
 .idea/
 .vscode/
@@ -46,7 +51,7 @@ data/
 
 # Checkpoints e modelos
 checkpoints/
-models/
+# models/
 *.ckpt
 *.pth 
 
@@ -61,3 +66,6 @@ models/
 pretrained_models/
 wav2vec2_checkpoints/
 ser_checkpoints/
+
+# Antigo
+antigo/

@@ -1,14 +1,15 @@
+import json
+import logging
 import os
+from typing import Dict, List, Tuple
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from fusion_model import FusionModel
 from tqdm import tqdm
-import numpy as np
-import json
-from typing import Dict, List, Tuple
-import logging
+
+from src.models.fusion_model import FusionModel
 
 # Configuração de logging
 logging.basicConfig(
